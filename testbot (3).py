@@ -10,7 +10,11 @@ from PIL import Image  # THIS IS THE LIBRARY WE JUST INSTALLED VIA PIP
 # ---------------------------------------------------------------------------
 # 1. CONFIGURATION & CONFIG CONSTANTS
 # ---------------------------------------------------------------------------
-API_TOKEN = '8710564963:AAEe2MT5aMjUz3bUoKKnb7250AqnGHYfDRw'  # Your Token
+API_TOKEN = os.getenv("BOT_TOKEN")
+
+if not API_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable is missing")
+
 bot = telebot.TeleBot(API_TOKEN)
 
 # Railway persistent database path
