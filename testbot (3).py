@@ -446,9 +446,9 @@ def handle_callbacks(call):
             f"🕐 Time of Restock:\n{r_time}\n\n"
             f"📅 Date of Restock:\n{r_date}\n\n"
             "💰 Price:\n"
-            "⭐ 190 Telegram Stars\n"
+            "⭐ 200 Telegram Stars\n"
             "💵 $3.40 USD\n"
-            "💵 ₱190 PHP\n\n"
+            "💵 ₱200 PHP\n\n"
             "━━━━━━━━━━━━━━━━━━━━━"
         )
         if os.path.exists(VIP_PROD_IMG):
@@ -831,7 +831,7 @@ def handle_callbacks(call):
             p_title = "REGULAR ACCOUNTS WITH 20 RANDOM CARS"
             m_title = "REGULAR ACCOUNTS"
         else:
-            stars = qty * 190
+            stars = qty * 200
             usd = qty * 3.40
             php = qty * 200
             p_title = "ACCOUNTS WITH 12K COINS"
@@ -856,7 +856,7 @@ def handle_callbacks(call):
         if prod == "regular":
             stars, usd, php = qty*20, qty*1, qty*30
         else:
-            stars, usd, php = qty*200, qty*3.40, qty*190
+            stars, usd, php = qty*200, qty*3.40, qty*200
             
         text = (
             "💳 SELECT PAYMENT METHOD 💳\n\n"
@@ -996,7 +996,7 @@ def handle_callbacks(call):
         if prod == "regular":
             amt_text = f"₱{int(val) * 30} PHP"
         elif prod == "vip":
-            amt_text = f"₱{int(val) * 190} PHP"
+            amt_text = f"₱{int(val) * 200} PHP"
         else:
             amt_text = "₱250 PHP" if val == "1m" else ("₱750 PHP" if val == "3m" else ("₱1,250 PHP" if val == "5m" else "₱2,500 PHP"))
 
