@@ -10,20 +10,8 @@ from PIL import Image  # THIS IS THE LIBRARY WE JUST INSTALLED VIA PIP
 # ---------------------------------------------------------------------------
 # 1. CONFIGURATION & CONFIG CONSTANTS
 # ---------------------------------------------------------------------------
-API_TOKEN = os.getenv("BOT_TOKEN")
-
-if not API_TOKEN:
-    raise ValueError("BOT_TOKEN environment variable is missing")
-
+API_TOKEN = '8710564963:AAG5ssCB0PW9c3ZJYw-HGiRjG4o1oXW1G6Q'  # Your Token
 bot = telebot.TeleBot(API_TOKEN)
-
-# Railway persistent database path
-# Mount your Railway Volume to /data so this file survives restarts/redeploys.
-DB_PATH = os.getenv("DB_PATH", "/data/tnnr_shop.db")
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-
-def get_db():
-    return sqlite3.connect(DB_PATH)
 
 OWNER_ID = 6531314640
 EXTRA_ADMIN = 8650959684
@@ -32,13 +20,14 @@ ADMINS = [OWNER_ID, EXTRA_ADMIN]
 STARS_CHANNEL_ID = -1003846885691
 LOGS_GROUP_ID = -1003957577057
 GARAGE_LOGS_GROUP_ID = -1003957577057
+REVIEWS_GROUP_ID = -1003970366188
 
 # Static asset filenames from specification
 REGULAR_PROD_IMG = "IMG_20260607_23110111_1_guid(17708fca83e048ddb7ed03bfa63579f0)_gallery.jpg"
 VIP_PROD_IMG = "IMG_20260608_00485017_0_guid(ec43f17fb1cf48d78d6cf8de8ed700f2)_gallery.jpg"
 
 PAYPAL_EMAIL_1 = "markryanmanoguid867@gmail.com"
-PAYPAL_EMAIL_2 = "tnremail@gmail.com"
+PAYPAL_EMAIL_2 = "Don't use for now, until tnnr put his email here"
 
 PAYMAYA_NAME = "MARKRYAN MANOGUID"
 PAYMAYA_NUM = "09281630511"
@@ -52,7 +41,7 @@ album_cache = {}
 # 2. DATABASE INITIALIZATION
 # ---------------------------------------------------------------------------
 def init_db():
-    conn = get_db()
+    conn = sqlite3.connect('tnnr_shop.db')
     cursor = conn.cursor()
     
     # Users table
@@ -79,6 +68,26 @@ def init_db():
     # VIP Inventory Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS vip_inventory (
+            account_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_email TEXT,
+            date_added TEXT,
+            time_added TEXT
+        )
+    ''')
+
+    # CarX 35K Gold Inventory Table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS carx_35K_inventory (
+            account_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_email TEXT,
+            date_added TEXT,
+            time_added TEXT
+        )
+    ''')
+
+    # CarX 20K Gold Inventory Table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS carx_20K_inventory (
             account_id INTEGER PRIMARY KEY AUTOINCREMENT,
             account_email TEXT,
             date_added TEXT,
@@ -127,7 +136,7 @@ def init_db():
         )
     ''')
 
-    # Garage Cars Inventory Table
+        # Garage Cars Inventory Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS garage_cars (
             car_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,6 +150,7 @@ def init_db():
             time_added TEXT
         )
     ''')
+
     
     # --- FIXED MIGRATION GUARD ---
     try:
@@ -163,6 +173,8 @@ def init_db():
     cursor.execute("INSERT OR IGNORE INTO stock_metadata VALUES ('REGULAR', 'N/A', 'N/A')")
     cursor.execute("INSERT OR IGNORE INTO stock_metadata VALUES ('VIP', 'N/A', 'N/A')")
     cursor.execute("INSERT OR IGNORE INTO stock_metadata VALUES ('GARAGE', 'N/A', 'N/A')")
+    cursor.execute("INSERT OR IGNORE INTO stock_metadata VALUES ('CARX35K', 'N/A', 'N/A')")
+    cursor.execute("INSERT OR IGNORE INTO stock_metadata VALUES ('CARX20K', 'N/A', 'N/A')")
     
     conn.commit()
     conn.close()
@@ -173,7 +185,7 @@ init_db()
 # 3. HELPER METRICS & DATA ENGINE FUNCTIONS
 # ---------------------------------------------------------------------------
 def get_stock_count(table_name):
-    conn = get_db()
+    conn = sqlite3.connect('tnnr_shop.db')
     cursor = conn.cursor()
     cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
     count = cursor.fetchone()[0]
@@ -181,7 +193,7 @@ def get_stock_count(table_name):
     return count
 
 def get_restock_meta(product_type):
-    conn = get_db()
+    conn = sqlite3.connect('tnnr_shop.db')
     cursor = conn.cursor()
     cursor.execute("SELECT last_restock_date, last_restock_time FROM stock_metadata WHERE product_type=?", (product_type,))
     meta = cursor.fetchone()
@@ -189,7 +201,7 @@ def get_restock_meta(product_type):
     return meta if meta else ("N/A", "N/A")
 
 def register_user_if_new(user_id, username):
-    conn = get_db()
+    conn = sqlite3.connect('tnnr_shop.db')
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
     if not cursor.fetchone():
@@ -201,8 +213,18 @@ def register_user_if_new(user_id, username):
     conn.close()
 
 def process_auto_delivery(user_id, username, product_name, qty, payment_method, total_price_str):
-    table = "regular_inventory" if "REGULAR" in product_name.upper() else "vip_inventory"
-    conn = get_db()
+    if "REGULAR" in product_name.upper():
+        table = "regular_inventory"
+    elif "VIP" in product_name.upper():
+        table = "vip_inventory"
+    elif "35K" in product_name.upper():
+        table = "carx_35K_inventory"
+    elif "20K" in product_name.upper():
+        table = "carx_20K_inventory"
+    else:
+        return None
+
+    conn = sqlite3.connect('tnnr_shop.db')
     cursor = conn.cursor()
     
     cursor.execute(f"SELECT account_id, account_email FROM {table} ORDER BY account_id ASC LIMIT ?", (qty,))
@@ -237,7 +259,7 @@ def process_auto_delivery(user_id, username, product_name, qty, payment_method, 
     return allocated_accounts
 
 def create_pending_order(user_id, username, product_name, qty, payment_method, total_price_str, proof_file_id=""):
-    conn = get_db()
+    conn = sqlite3.connect('tnnr_shop.db')
     cursor = conn.cursor()
     now = datetime.now()
     cur_date = now.strftime("%m/%d/%Y")
@@ -258,8 +280,8 @@ def create_pending_order(user_id, username, product_name, qty, payment_method, t
 def main_menu_keyboard(user_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(types.KeyboardButton("🛒 SHOP"), types.KeyboardButton("📦 MY ORDERS"))
-    markup.add(types.KeyboardButton("🛍 PREVIEWS"), types.KeyboardButton("📤 SEND PREVIEWS"))
     markup.add(types.KeyboardButton("📜 MY PURCHASE HISTORY"))
+    markup.add(types.KeyboardButton("💬 PREVIEWS"), types.KeyboardButton("✍️ SEND REVIEW"))
     if user_id in ADMINS:
         markup.add(types.KeyboardButton("📦🚘 INVENTORY 🚘📦"))
     return markup
@@ -267,13 +289,13 @@ def main_menu_keyboard(user_id):
 def shop_menu_keyboard():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
-        types.InlineKeyboardButton("🎁 REGULAR ACCOUNTS", callback_data="prod_regular"),
-        types.InlineKeyboardButton("🎁 ACCOUNTS WITH 12K COINS", callback_data="prod_vip"),
-        types.InlineKeyboardButton("🎁 DAILY COINFARM", callback_data="prod_coinfarm"),
-        types.InlineKeyboardButton("🎁 CHANGE EMAIL & PASSWORD", callback_data="prod_changepw"),
-        types.InlineKeyboardButton("🎁 TNNR GARAGE 🚘", callback_data="prod_garage"),
-        types.InlineKeyboardButton("🎁 PREVIEWS", callback_data="view_previews"),
-        types.InlineKeyboardButton("🎁 SEND PREVIEWS", callback_data="init_send_preview")
+        types.InlineKeyboardButton("🏎 REGULAR ACCOUNTS🏎", callback_data="prod_regular"),
+        types.InlineKeyboardButton("🛞 ACCOUNTS WITH 12K COINS🛞", callback_data="prod_vip"),
+        types.InlineKeyboardButton("-🏎CarX Street 35K gold🏎-", callback_data="prod_carx35K"),
+        types.InlineKeyboardButton("-🏎CarX Street 20K gold🏎-", callback_data="prod_carx20K"),
+        types.InlineKeyboardButton("🪙 DAILY COINFARM🪙", callback_data="prod_coinfarm"),
+        types.InlineKeyboardButton("🫳 CHANGE EMAIL & PASSWORD🫴", callback_data="prod_changepw"),
+        types.InlineKeyboardButton("🚔 TNNR GARAGE 🚘", callback_data="prod_garage")
     )
     return markup
 
@@ -336,23 +358,25 @@ def send_welcome(message):
     register_user_if_new(message.from_user.id, message.from_user.username)
     welcome_text = (
         "👋 Welcome to the TNNR SHOP BOT 🫶\n\n"
-        "🚘 Car Parking Multiplayer 2 (CPM2) 🚘\n\n"
+        "🚘 Car Parking Multiplayer 2 (CPM2) & CarX Street Store 🚘\n\n"
         "☠️💀 UNDERGROUND STORE 💀☠️\n\n"
         "Products Available\n"
         "🛍 Products\n"
         "📦 REGULAR ACCOUNTS WITH 20 RANDOM CARS\n"
         "📦 VIP ACCOUNTS WITH 12K COINS\n"
+        "🏎 CarX Street 35K gold Account\n"
+        "🏎 CarX Street 20K gold Account\n"
         "🪙 DAILY COINFARM SYSTEM\n"
         "📧 CHANGE EMAIL & PASSWORD BOT\n"
         "🚘 TNNR GARAGE 🚘\n\n"
         "⚡ Instant delivery on most items\n"
         "💯 Verified accounts, guaranteed quality\n"
         "💯 TRUSTED\n\n"
-        "Use the buttons below to get started."
+        "Use the menu buttons below to get started."
     )
     bot.send_message(message.chat.id, welcome_text, reply_markup=main_menu_keyboard(message.from_user.id))
 
-@bot.message_handler(func=lambda msg: msg.text in ["🛒 SHOP", "📦 MY ORDERS", "🛍 PREVIEWS", "📤 SEND PREVIEWS", "📜 MY PURCHASE HISTORY", "📦🚘 INVENTORY 🚘📦"])
+@bot.message_handler(func=lambda msg: msg.text in ["🛒 SHOP", "📦 MY ORDERS", "📜 MY PURCHASE HISTORY", "💬 PREVIEWS", "✍️ SEND REVIEW", "📦🚘 INVENTORY 🚘📦"])
 def handle_root_reply_kb(message):
     user_id = message.from_user.id
     register_user_if_new(user_id, message.from_user.username)
@@ -363,14 +387,14 @@ def handle_root_reply_kb(message):
     elif message.text == "📦 MY ORDERS":
         render_my_orders(message.chat.id, user_id)
         
-    elif message.text == "🛍 PREVIEWS":
-        render_previews(message.chat.id)
-        
-    elif message.text == "📤 SEND PREVIEWS":
-        init_preview_workflow(message.chat.id, user_id)
-        
     elif message.text == "📜 MY PURCHASE HISTORY":
         render_purchase_history(message.chat.id, user_id)
+        
+    elif message.text == "💬 PREVIEWS":
+        render_previews(message.chat.id)
+        
+    elif message.text == "✍️ SEND REVIEW":
+        init_preview_workflow(message.chat.id, user_id)
         
     elif message.text == "📦🚘 INVENTORY 🚘📦":
         if user_id not in ADMINS:
@@ -379,6 +403,8 @@ def handle_root_reply_kb(message):
         markup.add(
             types.InlineKeyboardButton("📦 REGULAR ACCOUNTS INVENTORY", callback_data="inv_view_reg"),
             types.InlineKeyboardButton("🎁 VIP ACCOUNTS INVENTORY", callback_data="inv_view_vip"),
+            types.InlineKeyboardButton("🏎 CARX 35K INVENTORY", callback_data="inv_view_cx35K"),
+            types.InlineKeyboardButton("🏎 CARX 20K INVENTORY", callback_data="inv_view_cx20K"),
             types.InlineKeyboardButton("🚘 TNNR GARAGE INVENTORY", callback_data="inv_view_garage"),
             types.InlineKeyboardButton("⬅ BACK", callback_data="close_menu")
         )
@@ -395,6 +421,11 @@ def handle_callbacks(call):
     data = call.data
 
     bot.answer_callback_query(call.id)
+
+    if data == "done_photo":
+        user_states[f"step_{user_id}"] = "WAITING_FOR_MSG"
+        bot.edit_message_text("📝 Step 2: Enter your review message.", chat_id, call.message.message_id)
+        return
 
     if data == "skip_photo_step":
         user_states[f"rev_photo_{user_id}"] = ""
@@ -416,7 +447,7 @@ def handle_callbacks(call):
         stock = get_stock_count("regular_inventory")
         r_date, r_time = get_restock_meta("REGULAR")
         caption = (
-            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
             "📦300 coin random slot and cars 📦\n\n"
             "🛍 REGULAR ACCOUNTS WITH RANDOM SLOTS AND RANDOM CARS\n\n"
             "📝 Description:\n"
@@ -428,7 +459,7 @@ def handle_callbacks(call):
             "💰 Price:\n"
             "⭐ 20 Telegram Stars\n"
             "💵 $1 USD\n"
-            "💵 ₱30 PHP\n\n"
+            "💵 ₱30 PHP\n"
             "━━━━━━━━━━━━━━━━━━━━━"
         )
         if os.path.exists(REGULAR_PROD_IMG):
@@ -441,7 +472,7 @@ def handle_callbacks(call):
         stock = get_stock_count("vip_inventory")
         r_date, r_time = get_restock_meta("VIP")
         caption = (
-            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
             "📦 VIP ACCOUNTS WITH 12K COINS 📦\n\n"
             "📝 Description:\n"
             "You can get good accounts with 12,000 coins based on your luck, so good luck bro bro.\n\n"
@@ -452,7 +483,7 @@ def handle_callbacks(call):
             "💰 Price:\n"
             "⭐ 200 Telegram Stars\n"
             "💵 $3.40 USD\n"
-            "💵 ₱200 PHP\n\n"
+            "💵 ₱190 PHP\n"
             "━━━━━━━━━━━━━━━━━━━━━"
         )
         if os.path.exists(VIP_PROD_IMG):
@@ -460,6 +491,60 @@ def handle_callbacks(call):
                 bot.send_photo(chat_id, photo, caption=caption, reply_markup=buy_quantity_keyboard("vip"))
         else:
             bot.send_message(chat_id, caption, reply_markup=buy_quantity_keyboard("vip"))
+
+    elif data == "prod_carx35K":
+        stock = get_stock_count("carx_35K_inventory")
+        r_date, r_time = get_restock_meta("CARX35K")
+        caption = (
+            " 🏎CarX Street 35K gold🏎\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            " 🏎CarX Street 35K gold🏎\n\n"
+            "📝 Description: \n"
+            " ⚠️don't buy a any car from car market cause all those cars in the car market is boosted, but you can buy to car market but make sure the hp of the car you buying is less than 1000hp⚠️ \n\n"
+            "🚔GRIND ACCOUNT🚔\n\n"
+            
+            "2.1B Money\n"
+            "35K gold\n"
+            "Unlock all Maps\n"
+            "Random Cars 35 Cars\n\n"
+            f"📦Account Stock: {stock}\n\n"
+            "⚡ Delivery: Instant \n"
+            f"🕐 Time of Restocked: {r_time}\n"
+            f"📅 DATE of Restocked: {r_date}\n\n"
+            "💰 Price:\n"
+            "⭐ 230 Telegram Stars\n"
+            "💵 $6.99 PayPal\n"
+            "💵 ₱210 PayMaya (only Philippines) \n"
+            "━━━━━━━━━━━━━━━━━━━━━"
+        )
+        bot.send_message(chat_id, caption, reply_markup=buy_quantity_keyboard("carx35K"))
+
+    elif data == "prod_carx20K":
+        stock = get_stock_count("carx_20K_inventory")
+        r_date, r_time = get_restock_meta("CARX20K")
+        caption = (
+            " 🏎CarX Street 20K gold🏎\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            " 🏎CarX Street 20K gold🏎\n\n"
+            "📝 Description: \n"
+            " ⚠️don't buy a any car from car market cause all those cars in the car market is boosted, but you can buy to car market but make sure the hp of the car you buying is less than 1000hp⚠️ \n\n"
+            "🚔GRIND ACCOUNT🚔\n\n"
+            
+            "1.1B Money\n"
+            "20K gold\n"
+            "Unlock all Maps\n"
+            "Random Cars 20 Cars\n\n"
+            f"📦Account Stock: {stock}\n\n"
+            "⚡ Delivery: Instant \n"
+            f"🕐 Time of Restocked: {r_time}\n"
+            f"📅 DATE of Restocked: {r_date}\n\n"
+            "💰 Price:\n"
+            "⭐ 210 Telegram Stars\n"
+            "💵 $5.00 PayPal\n"
+            "💵 ₱200 PayMaya (only Philippines) \n"
+            "━━━━━━━━━━━━━━━━━━━━━"
+        )
+        bot.send_message(chat_id, caption, reply_markup=buy_quantity_keyboard("carx20K"))
 
     elif data == "prod_coinfarm":
         text = (
@@ -509,7 +594,6 @@ def handle_callbacks(call):
         )
         bot.send_message(chat_id, text, reply_markup=changepw_plans_keyboard())
 
-    # --- TNNR GARAGE CORE WORKFLOW ---
     elif data == "prod_garage":
         cars_count = get_stock_count("garage_cars")
         g_date, g_time = get_restock_meta("GARAGE")
@@ -537,7 +621,7 @@ def handle_callbacks(call):
 
     elif data in ["garage_window_shopping", "garage_wanna_buy"]:
         mode = "window" if data == "garage_window_shopping" else "buy"
-        conn = get_db()
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         cursor.execute("SELECT brand, owner, price_stars, price_paypal, price_paymaya, photo_file_id, car_id FROM garage_cars ORDER BY car_id DESC")
         cars = cursor.fetchall()
@@ -552,8 +636,8 @@ def handle_callbacks(call):
             caption = (
                 f"💵 Price:\n"
                 f"⭐ Telegram Stars: {p_stars}\n"
-                f"💵 PayPal: ${p_pp:,.0f}\n"
-                f"💵 PayMaya: ₱{p_pm:,.0f} (Only Philippines 🇵🇭)\n\n"
+                f"💵 PayPal: ${p_pp:,.2f}\n"
+                f"💵 PayMaya: ₱{p_pm:,.2f} (Only Philippines 🇵🇭)\n\n"
                 f"👑 Car Owner: {owner}\n"
                 f"🚘 Car Brand: {brand}\n\n"
                 f"💵 Payment Method:\n"
@@ -568,7 +652,6 @@ def handle_callbacks(call):
             else:
                 markup.add(types.InlineKeyboardButton("🚘 TNNR GARAGE", callback_data="prod_garage"))
 
-            # SMART SYSTEM VIEW LOGIC: If a single collage ID exists (or fallback list), it handles it cleanly
             if photo_id and "," in photo_id:
                 photo_ids = photo_id.split(",")
                 media_group = []
@@ -590,7 +673,7 @@ def handle_callbacks(call):
 
     elif data.startswith("garbuy_confirm_"):
         car_id = int(data.split("_")[2])
-        conn = get_db()
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         cursor.execute("SELECT brand, owner, price_stars, price_paypal, price_paymaya, photo_file_id FROM garage_cars WHERE car_id=?", (car_id,))
         car = cursor.fetchone()
@@ -605,8 +688,8 @@ def handle_callbacks(call):
         caption = (
             f"💵 Price:\n"
             f"⭐ Telegram Stars: {p_stars}\n"
-            f"💵 PayPal: ${p_pp:,.0f}\n"
-            f"{f'💵 PayMaya: ₱{p_pm:,.0f}' if owner == '@Maarkryan' else ''}\n"
+            f"💵 PayPal: ${p_pp:,.2f}\n"
+            f"{f'💵 PayMaya: ₱{p_pm:,.2f}' if owner == '@Maarkryan' else ''}\n"
             f"👑 Car Owner: {owner}\n"
             f"🚘 Car Brand: {brand}"
         )
@@ -634,7 +717,7 @@ def handle_callbacks(call):
 
     elif data.startswith("garcheckout_"):
         car_id = int(data.split("_")[1])
-        conn = get_db()
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         cursor.execute("SELECT brand, owner, price_stars, price_paypal, price_paymaya FROM garage_cars WHERE car_id=?", (car_id,))
         car = cursor.fetchone()
@@ -655,8 +738,8 @@ def handle_callbacks(call):
             "---\n"
             "TOTAL:\n"
             f"⭐ {p_stars:,} Stars\n"
-            f"💵 ${p_pp:,.0f} USD\n"
-            f"{f'💴 ₱{p_pm:,.0f} PHP' if owner == '@Maarkryan' else ''}\n"
+            f"💵 ${p_pp:,.2f} USD\n"
+            f"{f'💴 ₱{p_pm:,.2f} PHP' if owner == '@Maarkryan' else ''}\n"
             "---"
         )
         
@@ -669,10 +752,9 @@ def handle_callbacks(call):
         
         bot.send_message(chat_id, text, reply_markup=markup)
 
-    # --- GARAGE PAYMENT SELECTIONS ---
     elif data.startswith("garpay_stars_"):
         car_id = int(data.split("_")[2])
-        conn = get_db()
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         cursor.execute("SELECT brand, price_stars FROM garage_cars WHERE car_id=?", (car_id,))
         car = cursor.fetchone()
@@ -700,7 +782,7 @@ def handle_callbacks(call):
 
     elif data.startswith("garpay_paypal_"):
         car_id = int(data.split("_")[2])
-        conn = get_db()
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         cursor.execute("SELECT brand, price_paypal FROM garage_cars WHERE car_id=?", (car_id,))
         car = cursor.fetchone()
@@ -712,7 +794,7 @@ def handle_callbacks(call):
         text = (
             f"1 Car(s) — {brand} ({p_pp} USD Purchase)\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💵 PAY ${p_pp:,.0f}\n"
+            f"💵 PAY ${p_pp:,.2f}\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
             "PAYPAL PAYMENT EMAILS:\n"
             f"📩 {PAYPAL_EMAIL_1}\n"
@@ -737,12 +819,11 @@ def handle_callbacks(call):
             "amount": "", 
             "extra_info": email_used
         }
-        
         prompt_for_payment_screenshot(chat_id)
 
     elif data.startswith("garpay_paymaya_"):
         car_id = int(data.split("_")[2])
-        conn = get_db()
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         cursor.execute("SELECT brand, price_paymaya FROM garage_cars WHERE car_id=?", (car_id,))
         car = cursor.fetchone()
@@ -754,7 +835,7 @@ def handle_callbacks(call):
         text = (
             f"1 Car(s) — {brand} ({p_pm} PHP Purchase)\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💴 PAY ₱{p_pm:,.0f}\n"
+            f"💴 PAY ₱{p_pm:,.2f}\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
             "PAYMAYA INFORMATION:\n"
             f"Name:\n{PAYMAYA_NAME}\n"
@@ -772,11 +853,11 @@ def handle_callbacks(call):
         }
         prompt_for_payment_screenshot(chat_id)
 
-    elif data in ["inv_view_reg", "inv_view_vip", "inv_view_garage"]:
+    elif data in ["inv_view_reg", "inv_view_vip", "inv_view_cx35K", "inv_view_cx20K", "inv_view_garage"]:
         if user_id not in ADMINS: return
         
         if data == "inv_view_garage":
-            conn = get_db()
+            conn = sqlite3.connect('tnnr_shop.db')
             cursor = conn.cursor()
             cursor.execute("SELECT car_id, brand, owner, price_stars FROM garage_cars")
             rows = cursor.fetchall()
@@ -794,10 +875,16 @@ def handle_callbacks(call):
                 bot.send_message(chat_id, out[i:i+4000])
             return
             
-        table = "regular_inventory" if data == "inv_view_reg" else "vip_inventory"
-        p_name = "REGULAR ACCOUNT" if data == "inv_view_reg" else "VIP ACCOUNT"
+        if data == "inv_view_reg":
+            table, p_name = "regular_inventory", "REGULAR ACCOUNT"
+        elif data == "inv_view_vip":
+            table, p_name = "vip_inventory", "VIP ACCOUNT"
+        elif data == "inv_view_cx35K":
+            table, p_name = "carx_35K_inventory", "CARX 35K GOLD ACCOUNT"
+        else:
+            table, p_name = "carx_20K_inventory", "CARX 20K GOLD ACCOUNT"
         
-        conn = get_db()
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         cursor.execute(f"SELECT account_id, account_email FROM {table}")
         rows = cursor.fetchall()
@@ -815,12 +902,17 @@ def handle_callbacks(call):
         for i in range(0, len(out), 4000):
             bot.send_message(chat_id, out[i:i+4000])
 
-    elif data.startswith("buy_regular_") or data.startswith("buy_vip_"):
+    elif data.startswith("buy_regular_") or data.startswith("buy_vip_") or data.startswith("buy_carx35K_") or data.startswith("buy_carx20K_"):
         parts = data.split("_")
         prod = parts[1]
         qty = int(parts[2])
         
-        stock_avail = get_stock_count("regular_inventory" if prod == "regular" else "vip_inventory")
+        if prod == "regular": table = "regular_inventory"
+        elif prod == "vip": table = "vip_inventory"
+        elif prod == "carx35K": table = "carx_35K_inventory"
+        else: table = "carx_20K_inventory"
+
+        stock_avail = get_stock_count(table)
         if stock_avail == 0:
             bot.send_message(chat_id, "❌ OUT OF STOCK\nPlease wait for the next restock.")
             return
@@ -829,27 +921,31 @@ def handle_callbacks(call):
             return
             
         if prod == "regular":
-            stars = qty * 20
-            usd = qty * 1
-            php = qty * 30
+            stars, usd, php = qty * 20, qty * 1.00, qty * 30
             p_title = "REGULAR ACCOUNTS WITH 20 RANDOM CARS"
             m_title = "REGULAR ACCOUNTS"
-        else:
-            stars = qty * 200
-            usd = qty * 3.40
-            php = qty * 200
+        elif prod == "vip":
+            stars, usd, php = qty * 200, qty * 3.40, qty * 190
             p_title = "ACCOUNTS WITH 12K COINS"
             m_title = "VIP ACCOUNTS"
+        elif prod == "carx35K":
+            stars, usd, php = qty * 230, qty * 6.99, qty * 210
+            p_title = "🏎CarX Street 35K gold🏎"
+            m_title = "🏎CarX Street 35K gold🏎"
+        else:
+            stars, usd, php = qty * 210, qty * 5.00, qty * 200
+            p_title = "🏎CarX Street 20K gold🏎"
+            m_title = "🏎CarX Street 20K gold🏎"
 
         summary = (
             f"🛒 {p_title} 🛒\n\n"
-            f"Quantity:\n{qty} {m_title}\n\n"
-            f"💰 Total Price\n\n"
-            f"⭐ Telegram Stars:\n{stars:,} Stars\n\n"
-            f"💵 USD:\n${usd:,}\n\n"
-            f"💵 PHP:\n₱{php:,.0f}"
+            f"Quantity: {qty} {m_title}\n\n"
+            f"💰 Price:\n"
+            f"⭐ Telegram Stars ⭐ - {stars:,} stars\n"
+            f" 💵 USD - ${usd:,.2f}\n"
+            f"💵 Peso  - ₱ {php:,}"
         )
-        markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("👑 CONTINUE TO PAYMENT METHOD", callback_data=f"checkout_{prod}_{qty}"))
+        markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("CONTINUE TO PAYMENT METHOD", callback_data=f"checkout_{prod}_{qty}"))
         bot.send_message(chat_id, summary, reply_markup=markup)
 
     elif data.startswith("checkout_"):
@@ -858,21 +954,23 @@ def handle_callbacks(call):
         qty = int(parts[2])
         
         if prod == "regular":
-            stars, usd, php = qty*20, qty*1, qty*30
+            stars, usd, php = qty*20, qty*1.00, qty*30
+        elif prod == "vip":
+            stars, usd, php = qty*200, qty*3.40, qty*190
+        elif prod == "carx35K":
+            stars, usd, php = qty*230, qty*6.99, qty*210
         else:
-            stars, usd, php = qty*200, qty*3.40, qty*200
+            stars, usd, php = qty*210, qty*5.00, qty*200
             
         text = (
-            "💳 SELECT PAYMENT METHOD 💳\n\n"
-            "Available Payment Methods:\n\n"
-            "💵 PayPal\n\n"
-            "⭐ Telegram Stars\n\n"
-            "💴 PayMaya (Philippines Only)\n\n"
-            "----------------------------\n"
-            f"TOTAL:\n"
-            f"⭐ {stars:,} Stars\n"
-            f"💵 ${usd:,} USD\n"
-            f"💴 ₱{php:,.0f} PHP"
+            "💳 Select Payment Method 💳\n\n"
+            "PayPal 💵\n"
+            "Telegram stars ⭐\n"
+            "PayMaya (only Philippines🇵🇭) \n\n"
+            "Total:\n"
+            f"⭐ Telegram Stars ⭐ - {stars:,} stars\n"
+            f" 💵 USD - ${usd:,.2f}\n"
+            f"💵 Peso  - ₱ {php:,}"
         )
         bot.send_message(chat_id, text, reply_markup=payment_method_keyboard(prod, qty, True))
 
@@ -925,6 +1023,16 @@ def handle_callbacks(call):
             stars = qty * 200
             p_full = f"{qty} VIP ACCOUNTS"
             header = "VIP ACCOUNTS"
+        elif prod == "carx35K":
+            qty = int(val)
+            stars = qty * 230
+            p_full = f"{qty} CarX Street 35K gold Accounts"
+            header = "CarX Street 35K gold"
+        elif prod == "carx20K":
+            qty = int(val)
+            stars = qty * 210
+            p_full = f"{qty} CarX Street 20K gold Accounts"
+            header = "CarX Street 20K gold"
         elif prod == "coinfarm":
             qty = 1
             p_full = f"DAILY COINFARM {val.upper()} PLAN"
@@ -961,9 +1069,13 @@ def handle_callbacks(call):
         
         amt_text = ""
         if prod == "regular":
-            amt_text = f"${int(val) * 1} USD"
+            amt_text = f"${int(val) * 1:.2f} USD"
         elif prod == "vip":
-            amt_text = f"${int(val) * 3.40} USD"
+            amt_text = f"${int(val) * 3.40:.2f} USD"
+        elif prod == "carx35K":
+            amt_text = f"${int(val) * 6.99:.2f} USD"
+        elif prod == "carx20K":
+            amt_text = f"${int(val) * 5.00:.2f} USD"
         else:
             amt_text = "$5" if val == "1m" else ("$15" if val == "3m" else ("$25" if val == "5m" else ("$50" if val == "10m" else "$60")))
 
@@ -987,7 +1099,7 @@ def handle_callbacks(call):
         markup.add(types.InlineKeyboardButton("📋 COPY EMAIL #1", callback_data="copy_em1"),
                    types.InlineKeyboardButton("📋 COPY EMAIL #2", callback_data="copy_em2"))
         markup.add(types.InlineKeyboardButton("✅ I PAID / SEND SCREENSHOT", callback_data=f"shop_sub_receipt"))
-        markup.add(types.InlineKeyboardButton("⬅ BACK", callback_data=f"checkout_{prod}_{val}" if prod in ["regular", "vip"] else f"{prod[:2]}_plan_{val}"))
+        markup.add(types.InlineKeyboardButton("⬅ BACK", callback_data=f"checkout_{prod}_{val}" if prod in ["regular", "vip", "carx35K", "carx20K"] else f"{prod[:2]}_plan_{val}"))
         
         bot.send_message(chat_id, text, reply_markup=markup)
 
@@ -1000,6 +1112,10 @@ def handle_callbacks(call):
         if prod == "regular":
             amt_text = f"₱{int(val) * 30} PHP"
         elif prod == "vip":
+            amt_text = f"₱{int(val) * 190} PHP"
+        elif prod == "carx35K":
+            amt_text = f"₱{int(val) * 210} PHP"
+        elif prod == "carx20K":
             amt_text = f"₱{int(val) * 200} PHP"
         else:
             amt_text = "₱250 PHP" if val == "1m" else ("₱750 PHP" if val == "3m" else ("₱1,250 PHP" if val == "5m" else "₱2,500 PHP"))
@@ -1032,14 +1148,11 @@ def handle_callbacks(call):
         em = PAYPAL_EMAIL_1 if "1" in data else PAYPAL_EMAIL_2
         bot.send_message(chat_id, f"`{em}`", parse_mode="Markdown")
 
-    # =======================================================================
-    # 🌟 SAFE ADMIN CONFIRM LOGIC (ANTI-CRASH UPDATED NODE)
-    # =======================================================================
     elif data.startswith("admin_confirm_"):
         if user_id not in ADMINS: return
         oid = int(data.split("_")[2])
         
-        conn = get_db()
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         cursor.execute("SELECT user_id, username, product, quantity, payment_method, amount, payment_proof FROM orders WHERE order_id=?", (oid,))
         order = cursor.fetchone()
@@ -1073,8 +1186,16 @@ def handle_callbacks(call):
             bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=success_text, reply_markup=None)
             return
 
-        if "REGULAR" in prod_name.upper() or "VIP" in prod_name.upper():
-            p_type = "regular_inventory" if "REGULAR" in prod_name.upper() else "vip_inventory"
+        if any(x in prod_name.upper() for x in ["REGULAR", "VIP", "35K", "20K"]):
+            if "REGULAR" in prod_name.upper():
+                p_type, label = "regular_inventory", "REGULAR ACCOUNTS"
+            elif "VIP" in prod_name.upper():
+                p_type, label = "vip_inventory", "VIP ACCOUNTS"
+            elif "35K" in prod_name.upper():
+                p_type, label = "carx_35K_inventory", "🏎CarX Street 35K gold🏎"
+            else:
+                p_type, label = "carx_20K_inventory", "🏎CarX Street 20K gold🏎"
+
             cursor.execute(f"SELECT account_id, account_email FROM {p_type} ORDER BY account_id ASC LIMIT ?", (qty,))
             items = cursor.fetchall()
             
@@ -1096,7 +1217,7 @@ def handle_callbacks(call):
             formatted_accs = "\n".join(allocated)
             deliv_msg = (
                 "✅ ORDER CONFIRMED & DELIVERED\n"
-                f"Product: {'REGULAR ACCOUNTS' if 'REGULAR' in prod_name.upper() else 'VIP ACCOUNTS'}\n"
+                f"Product: {label}\n"
                 f"Quantity: {qty}\n\n"
                 f"Account Details:\n{formatted_accs}\n\n"
                 "Status: ✅ COMPLETED\n\n"
@@ -1149,14 +1270,11 @@ def handle_callbacks(call):
             success_text = f"✅ ChangePassword Token #{oid} Assigned and marked COMPLETED."
             bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=success_text, reply_markup=None)
 
-    # =======================================================================
-    # 🌟 SAFE ADMIN DECLINE LOGIC (ANTI-CRASH UPDATED NODE)
-    # =======================================================================
     elif data.startswith("admin_decline_"):
         if user_id not in ADMINS: return
         oid = int(data.split("_")[2])
         
-        conn = get_db()
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         cursor.execute("SELECT user_id FROM orders WHERE order_id=?", (oid,))
         row = cursor.fetchone()
@@ -1180,11 +1298,14 @@ def handle_callbacks(call):
         render_previews(chat_id)
     elif data == "init_send_preview":
         init_preview_workflow(chat_id, user_id)
+        # Ensure this is inside your callback_query_handler function
     elif data.startswith("rev_prod_"):
         selected_p = data.split("_")[2]
+        
         mapping = {
             "reg": "REGULAR CARS", 
             "vip": "VIP ACCOUNTS", 
+            "carx": "🏎️ CarX Street Gold (20K/35K)",
             "garage": "TNNR GARAGE", 
             "cf": "DAILY COINFARM SYSTEM", 
             "pw": "CHANGE EMAIL & PASSWORD BOT"
@@ -1194,7 +1315,9 @@ def handle_callbacks(call):
         p_sel = user_states.get(f"rev_prod_{user_id}", "None")
         p_rat = user_states.get(f"rev_rating_{user_id}", "10/10")
         p_msg = user_states.get(f"rev_msg_{user_id}", "N/A")
-        has_img = "Uploaded" if user_states.get(f"rev_photo_{user_id}") else "Skipped"
+        
+        photos = user_states.get(f"rev_photo_{user_id}", [])
+        has_img = f"Uploaded ({len(photos)})" if len(photos) > 0 else "Skipped"
         
         summary = (
             "━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1212,27 +1335,60 @@ def handle_callbacks(call):
         bot.send_message(chat_id, summary, reply_markup=markup)
 
     elif data == "rev_finalize_submit":
+        # Remove buttons to prevent double submission
+        try:
+            bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=None
+            )
+        except Exception as e:
+            print(f"Error removing buttons: {e}")
+
         p_sel = user_states.get(f"rev_prod_{user_id}", "GENERAL")
         p_rat = user_states.get(f"rev_rating_{user_id}", "10/10")
         p_msg = user_states.get(f"rev_msg_{user_id}", "No content.")
-        p_file = user_states.get(f"rev_photo_{user_id}", "")
-        
-        conn = get_db()
+        p_files = user_states.get(f"rev_photo_{user_id}", [])
+        p_file_db = ",".join(p_files) if isinstance(p_files, list) else str(p_files)
+
+        # Save to Database
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         now = datetime.now()
         cursor.execute('''
             INSERT INTO reviews (user_id, username, product, rating, review_message, screenshot_path, date, time)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (user_id, username, p_sel, p_rat, p_msg, p_file, now.strftime("%m/%d/%Y"), now.strftime("%I:%M %p")))
+        ''', (user_id, username, p_sel, p_rat, p_msg, p_file_db, now.strftime("%m/%d/%Y"), now.strftime("%I:%M %p")))
         cursor.execute("UPDATE users SET total_orders = total_orders + 1 WHERE user_id=?", (user_id,))
         conn.commit()
         conn.close()
+
+        # Send to Review Group
+        review_text = f"🌟 **NEW CUSTOMER REVIEW** 🌟\n\n👤 Buyer: @{username}\n📦 Product: {p_sel}\n⭐ Rating: {p_rat}\n📝 Review: {p_msg}\n\n💯 TRUSTED SELLER"
         
+        try:
+            if isinstance(p_files, list) and len(p_files) > 0:
+                media = [types.InputMediaPhoto(open(f, 'rb')) for f in p_files if os.path.exists(f)]
+                if media:
+                    media[0].caption = review_text
+                    bot.send_media_group(REVIEWS_GROUP_ID, media)
+                else:
+                    bot.send_message(REVIEWS_GROUP_ID, review_text)
+            else:
+                bot.send_message(REVIEWS_GROUP_ID, review_text)
+        except Exception as e:
+            print(f"Error sending to review group: {e}")
+
+        # Cleanup
         for k in [f"rev_prod_{user_id}", f"rev_rating_{user_id}", f"rev_msg_{user_id}", f"rev_photo_{user_id}", f"step_{user_id}"]:
             user_states.pop(k, None)
-            
-        bot.send_message(chat_id, "✅ Review verified and committed into system pipeline successfully.")
 
+        bot.send_message(
+    chat_id, 
+    "✅ *Review verified successfully.*\n\n"
+    "Join our group here: [TNNR SHOP REVIEWS](https://t.me/+Z778T873N9MxODA1)", 
+    parse_mode='Markdown'
+)
 
 # ---------------------------------------------------------------------------
 # 7. TELEGRAM STARS VALIDATION & DELIVERY SYSTEMS
@@ -1253,15 +1409,18 @@ def validate_stars_stock(pre_checkout_query):
     prod = parts[1]
     qty = int(parts[3])
 
-    if prod in ["regular", "vip"]:
-        table = "regular_inventory" if prod == "regular" else "vip_inventory"
+    if prod in ["regular", "vip", "carx35K", "carx20K"]:
+        if prod == "regular": table = "regular_inventory"
+        elif prod == "vip": table = "vip_inventory"
+        elif prod == "carx35K": table = "carx_35K_inventory"
+        else: table = "carx_20K_inventory"
+        
         stock = get_stock_count(table)
         if stock < qty:
             bot.answer_pre_checkout_query(pre_checkout_query.id, ok=False, error_message=f"❌ Out of Stock! We do not have enough items in stock. Available: {stock}")
             return
             
     bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-
 
 @bot.message_handler(content_types=['successful_payment'])
 def handle_stars_success_payment(message):
@@ -1274,14 +1433,11 @@ def handle_stars_success_payment(message):
     d_str = now.strftime('%m/%d/%Y')
     t_str = now.strftime('%I:%M %p')
     
-    # ----------------------------------------------------------------
-    # CASE A: TNNR GARAGE (CAR STARS WORKFLOW)
-    # ----------------------------------------------------------------
     if payload.startswith("carstars:"):
         parts = payload.split(":")
         car_id = int(parts[1])
 
-        conn = get_db()
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         cursor.execute("SELECT brand, owner, photo_file_id FROM garage_cars WHERE car_id=?", (car_id,))
         car = cursor.fetchone()
@@ -1341,9 +1497,6 @@ def handle_stars_success_payment(message):
         bot.send_message(buyer_id, deliv_msg)
         return
 
-    # ----------------------------------------------------------------
-    # CASE B: SHOP REGULAR / VIP / COINFARM ACCOUNTS
-    # ----------------------------------------------------------------
     if not payload.startswith("stars_buy:"):
         return
 
@@ -1367,8 +1520,12 @@ def handle_stars_success_payment(message):
     except Exception as e:
         print(f"Stars Channel Shop Log Error: {e}")
 
-    if prod in ["regular", "vip"]:
-        p_name = "REGULAR CARS" if prod == "regular" else "VIP ACCOUNTS"
+    if prod in ["regular", "vip", "carx35K", "carx20K"]:
+        if prod == "regular": p_name = "REGULAR CARS"
+        elif prod == "vip": p_name = "VIP ACCOUNTS"
+        elif prod == "carx35K": p_name = "CarX Street 35K gold"
+        else: p_name = "CarX Street 20K gold"
+        
         res = process_auto_delivery(buyer_id, buyer_uname, p_name, qty, "TELEGRAM STARS", f"⭐ {payment_info.total_amount}")
         
         if res:
@@ -1417,7 +1574,6 @@ def handle_stars_success_payment(message):
         )
         bot.send_message(buyer_id, cf_msg)
         
-        # FIXED: Added admin_order_keyboard so admins can Confirm/Decline Stars payments for custom plans too
         try:
             bot.send_message(LOGS_GROUP_ID, f"🔔 **Stars Custom Order:** User @{buyer_uname} requested {p_name} ({val.upper()}). Order #{order_id}. Confirm setup?", reply_markup=admin_order_keyboard(order_id))
         except Exception:
@@ -1477,7 +1633,7 @@ def trigger_album_verification_pipeline(message, media_group_id=None, single_pho
 
     if "GAR_CAR_" in prod_raw:
         car_id = int(prod_raw.split("_")[-1])
-        conn = get_db()
+        conn = sqlite3.connect('tnnr_shop.db')
         cursor = conn.cursor()
         cursor.execute("SELECT brand, owner, price_paypal, price_paymaya, photo_file_id FROM garage_cars WHERE car_id=?", (car_id,))
         car = cursor.fetchone()
@@ -1490,7 +1646,7 @@ def trigger_album_verification_pipeline(message, media_group_id=None, single_pho
         brand, owner, p_pp, p_pm, photo_file_id = car
         p_full = f"CAR: {brand} ({owner}) [ID: {car_id}]"
         qty = 1
-        amt = f"${p_pp}" if "PP" in prod_raw else f"₱{p_pm}"
+        amt = f"${p_pp:.2f}" if "PP" in prod_raw else f"₱{p_pm}"
         product_img_to_send = photo_file_id 
 
     else:
@@ -1500,26 +1656,34 @@ def trigger_album_verification_pipeline(message, media_group_id=None, single_pho
         
         if prod == "regular":
             qty = int(val)
-            amt = f"${qty * 2}" if method == "PAYPAL" else f"₱{qty * 60}"
+            amt = f"${qty * 1:.2f}" if method == "PAYPAL" else f"₱{qty * 30}"
             p_full = f"{qty} REGULAR CARS ACCOUNTS"
             if os.path.exists(REGULAR_PROD_IMG): product_img_to_send = REGULAR_PROD_IMG
         elif prod == "vip":
             qty = int(val)
-            amt = f"${qty * 4}" if method == "PAYPAL" else f"₱{qty * 200}"
+            amt = f"${qty * 3.40:.2f}" if method == "PAYPAL" else f"₱{qty * 190}"
             p_full = f"{qty} VIP ACCOUNTS"
             if os.path.exists(VIP_PROD_IMG): product_img_to_send = VIP_PROD_IMG
+        elif prod == "carx35K":
+            qty = int(val)
+            amt = f"${qty * 6.99:.2f}" if method == "PAYPAL" else f"₱{qty * 210}"
+            p_full = f"{qty} CarX Street 35K gold Accounts"
+        elif prod == "carx20K":
+            qty = int(val)
+            amt = f"${qty * 5.00:.2f}" if method == "PAYPAL" else f"₱{qty * 200}"
+            p_full = f"{qty} CarX Street 20K gold Accounts"
         elif prod == "coinfarm":
             qty = 1
             p_full = f"DAILY COINFARM SYSTEM {val.upper()} PLAN"
             if method == "PAYPAL":
-                amt = "$5" if val == "1m" else ("$15" if val == "3m" else ("$25" if val == "5m" else ("$50" if val == "10m" else "$60")))
+                amt = "$5.00" if val == "1m" else ("$15.00" if val == "3m" else ("$25.00" if val == "5m" else ("$50.00" if val == "10m" else "$60.00")))
             else:
                 amt = "₱250" if val == "1m" else ("₱750" if val == "3m" else ("₱1,250" if val == "5m" else "₱2,500"))
         else:
             qty = 1
             p_full = f"CHANGE EMAIL & PASSWORD BOT {val.upper()} PLAN"
             if method == "PAYPAL":
-                amt = "$5" if val == "1m" else ("$15" if val == "3m" else ("$25" if val == "5m" else ("$50" if val == "10m" else "$60")))
+                amt = "$5.00" if val == "1m" else ("$15.00" if val == "3m" else ("$25.00" if val == "5m" else ("$50.00" if val == "10m" else "$60.00")))
             else:
                 amt = "₱250" if val == "1m" else ("₱750" if val == "3m" else ("₱1,250" if val == "5m" else "₱2,500"))
 
@@ -1535,7 +1699,7 @@ def trigger_album_verification_pipeline(message, media_group_id=None, single_pho
         f"💳 PAYMENT METHOD: {method}\n"
         f"💰 PAYMENT AMOUNT: {amt}\n"
     )
-    if "GAR_CAR_PP_" in prod_raw or "SHOP_" in prod_raw and method == "PAYPAL":
+    if ("GAR_CAR_PP_" in prod_raw or "SHOP_" in prod_raw) and method == "PAYPAL":
         log_txt += f"📩 PAYPAL EMAIL LOGGED: {state.get('extra_info','N/A')}\n"
 
     target_group = GARAGE_LOGS_GROUP_ID if "GAR_CAR_" in prod_raw else LOGS_GROUP_ID
@@ -1590,6 +1754,7 @@ def processing_review_inputs(message):
         markup.add(
             types.InlineKeyboardButton("📦 REGULAR CARS", callback_data="rev_prod_reg"),
             types.InlineKeyboardButton("🎁 VIP ACCOUNTS", callback_data="rev_prod_vip"),
+            types.InlineKeyboardButton("🏎️ CARX STREET GOLD", callback_data="rev_prod_carx"),
             types.InlineKeyboardButton("🚘 TNNR GARAGE", callback_data="rev_prod_garage"),
             types.InlineKeyboardButton("🪙 DAILY COINFARM SYSTEM", callback_data="rev_prod_cf"),
             types.InlineKeyboardButton("📧 CHANGE EMAIL & PASSWORD BOT", callback_data="rev_prod_pw")
@@ -1597,14 +1762,24 @@ def processing_review_inputs(message):
         bot.send_message(message.chat.id, "📦 Step 4: Select Purchased Product Category Model", reply_markup=markup)
 
 def advance_to_review_msg(chat_id, user_id):
-    user_states[f"step_{user_id}"] = "WAITING_FOR_MSG"
-    bot.send_message(chat_id, "📝 Step 2: Enter Your Review Message\n\nExample:\nFast delivery bro. Trusted seller. Will buy again.")
+    current_step = user_states.get(f"step_{user_id}")
+
+    # Kung nasa Photo step, ilipat sa Message step
+    if current_step == "WAITING_FOR_PHOTO":
+        user_states[f"step_{user_id}"] = "WAITING_FOR_MSG"
+        bot.send_message(chat_id, "📝 Step 2: Enter your review message.")
+    
+    # Kung nasa Message step, ilipat sa Summary step
+    elif current_step == "WAITING_FOR_MSG":
+        user_states[f"step_{user_id}"] = "REVIEW_SUMMARY"
+        show_review_summary(chat_id, user_id)
+
 
 # ---------------------------------------------------------------------------
 # 9. RENDER EXTENSION FUNCTIONS FOR TABULAR/LIST VIEWS
 # ---------------------------------------------------------------------------
 def render_previews(chat_id):
-    conn = get_db()
+    conn = sqlite3.connect('tnnr_shop.db')
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT date, username, user_id, product, rating, review_message, screenshot_path FROM reviews ORDER BY review_id DESC LIMIT 10")
@@ -1635,7 +1810,7 @@ def render_previews(chat_id):
             bot.send_message(chat_id, text)
 
 def render_my_orders(chat_id, user_id):
-    conn = get_db()
+    conn = sqlite3.connect('tnnr_shop.db')
     cursor = conn.cursor()
     cursor.execute("SELECT order_id, date, time, product, status FROM orders WHERE user_id=? ORDER BY order_id DESC", (user_id,))
     rows = cursor.fetchall()
@@ -1659,7 +1834,7 @@ def render_my_orders(chat_id, user_id):
     bot.send_message(chat_id, out)
 
 def render_purchase_history(chat_id, user_id):
-    conn = get_db()
+    conn = sqlite3.connect('tnnr_shop.db')
     cursor = conn.cursor()
     cursor.execute("SELECT date, time, product, payment_method, amount, status FROM orders WHERE user_id=? AND status='COMPLETED' ORDER BY order_id DESC", (user_id,))
     rows = cursor.fetchall()
@@ -1683,26 +1858,50 @@ def render_purchase_history(chat_id, user_id):
     bot.send_message(chat_id, out)
 
 # ---------------------------------------------------------------------------
-# 10. ADMIN ONLY MANAGEMENT RESTOCK SUBSYSTEM COMMANDS
+# 10. ADMIN ONLY MANAGEMENT RESTOCK SUBSYSTEM COMMANDS (FIXED FOR ALL TRIGGERS)
 # ---------------------------------------------------------------------------
-@bot.message_handler(commands=['restock_regular', 'restock_vip'])
+@bot.message_handler(commands=['restock_regular', 'restockregular', 'restock_vip', 'restockvip', 'addstock35kcarx', 'addstock20kcarx'])
 def restock_routing_entry(message):
     if message.from_user.id not in ADMINS: 
         return
         
     parts = message.text.split()
+    command_clean = parts[0].lower().split('@')[0]
+    
     if len(parts) < 2:
-        bot.reply_to(message, "⚠️ Syntax Error!\n\nUse this format exactly:\n`/restock_regular 3` or `/restock_vip 3`", parse_mode="Markdown")
+        bot.reply_to(message, f"⚠️ Syntax Error!\n\nUse this format exactly:\n`{parts[0]} 3`", parse_mode="Markdown")
         return
         
     try:
         qty = int(parts[1])
     except ValueError:
-        bot.reply_to(message, "❌ Invalid Quantity! Please provide a valid number. Example: `/restock_regular 5`", parse_mode="Markdown")
+        bot.reply_to(message, "❌ Invalid Quantity! Please provide a valid number.", parse_mode="Markdown")
         return
 
-    command_clean = parts[0].lower().split('@')[0]
-    p_type = "REGULAR" if "regular" in command_clean else "VIP"
+    # ETO ANG FIX: I-assign ang table variable agad base sa command
+    table = None
+    if "regular" in command_clean: 
+        p_type = "REGULAR"
+        table = "table_regular" # Palitan mo ito base sa tunay na pangalan ng table mo
+    elif "vip" in command_clean: 
+        p_type = "VIP"
+        table = "table_vip"
+    elif "35k" in command_clean: # lowercase na dapat dahil naka .lower() ka
+        p_type = "CARX35K"
+        table = "table_carx35k"
+    elif "20k" in command_clean:
+        p_type = "CARX20K"
+        table = "table_carx20k"
+    else:
+        bot.reply_to(message, "❌ Unknown restock command, bro.")
+        return
+
+    # Siguraduhin na hindi None ang table bago ituloy
+    if table:
+        # Dito mo ituloy yung pag-process, halimbawa:
+        # process_restock_payload(message, qty, table)
+        pass 
+
     
     msg_prompt = bot.reply_to(
         message, 
@@ -1711,7 +1910,6 @@ def restock_routing_entry(message):
         f"Format: `email:password` (one account per line).",
         parse_mode="Markdown"
     )
-    
     bot.register_next_step_handler(msg_prompt, process_restock_payload, p_type, qty)
 
 def process_restock_payload(message, p_type, target_qty):
@@ -1720,9 +1918,18 @@ def process_restock_payload(message, p_type, target_qty):
         return
 
     lines = [line.strip() for line in message.text.split('\n') if line.strip()]
-    table = "regular_inventory" if p_type == "REGULAR" else "vip_inventory"
     
-    conn = get_db()
+    # Strict database alignment table routers
+    if p_type == "REGULAR": 
+        table = "regular_inventory"
+    elif p_type == "VIP": 
+        table = "vip_inventory"
+    elif p_type == "CARX35K": 
+        table = "carx_35K_inventory"
+    elif p_type == "CARX20K": 
+        table = "carx_20K_inventory"
+    
+    conn = sqlite3.connect('tnnr_shop.db')
     cursor = conn.cursor()
     
     now = datetime.now()
@@ -1735,7 +1942,6 @@ def process_restock_payload(message, p_type, target_qty):
         count += 1
         
     cursor.execute("INSERT OR REPLACE INTO stock_metadata (product_type, last_restock_date, last_restock_time) VALUES (?, ?, ?)", (p_type, d_str, t_str))
-    
     conn.commit()
     conn.close()
     
@@ -1748,10 +1954,10 @@ def process_restock_payload(message, p_type, target_qty):
         parse_mode="Markdown"
     )
 
-# --- DYNAMIC ADMIN COMMAND FOR ADDING CARS TO TNNR GARAGE ---
 @bot.message_handler(commands=['addcar'])
 def init_add_car_command(message):
-    if message.from_user.id not in ADMINS: return
+    if message.from_user.id not in ADMINS: 
+        return
     msg = bot.reply_to(message, "🏎️ **[Admin Mode]** Please send the **Car Brand** (Example: Porsche 911):")
     bot.register_next_step_handler(msg, process_car_brand)
 
@@ -1791,7 +1997,7 @@ def process_car_paypal(message):
         return
     user_states[f"addcar_paypal_{user_id}"] = paypal
     
-    if user_states[f"addcar_owner_{user_id}"] == "@Maarkryan":
+    if user_states.get(f"addcar_owner_{user_id}") == "@Maarkryan":
         msg = bot.reply_to(message, "💴 Set the price for **PayMaya PHP** (Numbers only, ex: 430):")
         bot.register_next_step_handler(msg, process_car_paymaya)
     else:
@@ -1810,142 +2016,149 @@ def process_car_paymaya(message):
 
 def prompt_for_photo_info(message, user_id):
     user_states[f"addcar_flow_active_{user_id}"] = "WAITING_FOR_CAR_PHOTOS"
-    bot.send_message(message.chat.id, "📸 Finally, send the **CAR IMAGES** (Supports Album/Multiple up to 3 pictures):")
+    msg = bot.send_message(message.chat.id, "📸 Finally, send the **CAR IMAGES** (Supports Album/Multiple up to 3 pictures):")
+    # This handler ensures the bot listens for the photos next
+    bot.register_next_step_handler(msg, process_car_photo)
+
+# Kailangan mo ng dictionary sa taas ng file mo: album_timers = {}
+album_timers = {}
 
 def process_car_photo(message):
     user_id = message.from_user.id
+    if not message.photo:
+        return
+        
     photo_file_id = message.photo[-1].file_id
 
     if message.media_group_id:
         mg_id = message.media_group_id
-        
         if mg_id not in album_cache:
-            album_cache[mg_id] = []
-            t = threading.Timer(2.5, finalize_add_car_database_collage, args=[message, mg_id])
+            album_cache[mg_id] = {'photos': [], 'user_id': user_id}
+            # I-start ang timer para sa album
+            t = threading.Timer(3.0, finalize_add_car_database_collage, args=[message, mg_id, None, user_id])
+            album_timers[mg_id] = t
             t.start()
+        
+        # Siguraduhin na hindi na-dodouble ang file ID
+        if photo_file_id not in album_cache[mg_id]['photos']:
+            album_cache[mg_id]['photos'].append(photo_file_id)
+    else:
+        # Single photo
+        finalize_add_car_database_collage(message, media_group_id=None, single_photo_list=[photo_file_id], user_id=user_id)
+
+        msg = bot.reply_to(message, "❌ Please send a valid photo.")
+        bot.register_next_step_handler(msg, process_car_photo)
+        return
+        
+    photo_file_id = message.photo[-1].file_id
+
+    if message.media_group_id:
+        mg_id = message.media_group_id
+        if mg_id not in album_cache:
+            album_cache[mg_id] = {'photos': [], 'user_id': user_id}
+        
+        if mg_id in album_timers:
+            album_timers[mg_id].cancel()
             
-        if len(album_cache[mg_id]) < 3:
-            album_cache[mg_id].append(photo_file_id)
+        album_cache[mg_id]['photos'].append(photo_file_id)
+        
+        t = threading.Timer(3.0, finalize_add_car_database_collage, args=[message, mg_id, None, user_id])
+        album_timers[mg_id] = t
+        t.start()
     else:
-        finalize_add_car_database_collage(message, media_group_id=None, single_photo_list=[photo_file_id])
+        finalize_add_car_database_collage(message, media_group_id=None, single_photo_list=[photo_file_id], user_id=user_id)
 
-def finalize_add_car_database_collage(message, media_group_id=None, single_photo_list=None):
-    user_id = message.from_user.id
+def finalize_add_car_database_collage(message, media_group_id=None, single_photo_list=None, user_id=None):
+    # I-cancel ang timer para iwas crash
+    if media_group_id and media_group_id in album_timers:
+        album_timers[media_group_id].cancel()
+        album_timers.pop(media_group_id, None)
+        
     chat_id = message.chat.id
-    
-    if single_photo_list:
-        photos_to_process = single_photo_list
-    else:
-        if media_group_id in album_cache:
-            photos_to_process = album_cache[media_group_id]
-            del album_cache[media_group_id]
-        else:
-            return
-
     brand = user_states.get(f"addcar_brand_{user_id}")
     if not brand: return
 
-    prog_msg = bot.send_message(chat_id, f"⏳ Syncing data cluster for {brand}... Merging image pipeline for seamless display...")
-
-    collaged_photo_file_id = None
-    photo_count = len(photos_to_process)
-
-    if photo_count > 1:
-        try:
-            downloaded_images = []
-            for f_id in photos_to_process:
-                file_info = bot.get_file(f_id)
-                image_data = bot.download_file(file_info.file_path)
-                image_bytes = io.BytesIO(image_data)
-                pil_image = Image.open(image_bytes)
-                downloaded_images.append(pil_image)
-
-            target_width = 1200
-            total_height = 0
-            resized_images = []
-
-            for img in downloaded_images:
-                w, h = img.size
-                aspect_ratio = w / h
-                target_height = int(target_width / aspect_ratio)
-                
-                resized_img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
-                resized_images.append(resized_img)
-                total_height += target_height
-
-            final_collage = Image.new('RGB', (target_width, total_height), (0, 0, 0))
-
-            current_y_offset = 0
-            for r_img in resized_images:
-                final_collage.paste(r_img, (0, current_y_offset))
-                current_y_offset += r_img.height
-
-            output_bytes = io.BytesIO()
-            final_collage.save(output_bytes, format='JPEG', quality=85)
-            output_bytes.seek(0)
-
-            uploaded_collaged_msg = bot.send_photo(chat_id, output_bytes, caption=f"🛠 Car Profile: Combined data view for {brand}")
-            collaged_photo_file_id = uploaded_collaged_msg.photo[-1].file_id
-
-        except Exception as e:
-            bot.edit_message_text(chat_id=chat_id, message_id=prog_msg.message_id, text=f"❌ Image pipeline error: {e}. Reverting to standard non-merged sync...")
-            collaged_photo_file_id = ",".join(photos_to_process)
-            
+    photo_ids = []
+    if media_group_id:
+        if media_group_id in album_cache:
+            photo_ids = album_cache[media_group_id]['photos']
+            album_cache.pop(media_group_id, None)
     else:
-        collaged_photo_file_id = photos_to_process[0]
+        photo_ids = single_photo_list
 
-    owner = user_states.get(f"addcar_owner_{user_id}")
-    stars = user_states.get(f"addcar_stars_{user_id}")
-    paypal = user_states.get(f"addcar_paypal_{user_id}")
-    paymaya = user_states.get(f"addcar_paymaya_{user_id}", 0.0)
+    # DITO YUNG FIX: I-join ang photo IDs gamit ang comma
+    # Ito ang babasahin ng logic mo sa 'garage_window_shopping' para maging media_group
+    photo_string = ",".join(photo_ids)
+    
+    try:
+        # DB Sync
+        conn = sqlite3.connect('tnnr_shop.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO garage_cars (brand, owner, price_stars, price_paypal, price_paymaya, photo_file_id, date_added, time_added)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (brand, user_states.get(f"addcar_owner_{user_id}"), user_states.get(f"addcar_stars_{user_id}"), 
+              user_states.get(f"addcar_paypal_{user_id}"), user_states.get(f"addcar_paymaya_{user_id}"), 
+              photo_string, datetime.now().strftime("%m/%d/%Y"), datetime.now().strftime("%I:%M %p")))
+        conn.commit()
+        conn.close()
 
-    now = datetime.now()
-    d_str = now.strftime("%m/%d/%Y")
-    t_str = now.strftime("%I:%M %p")
+        bot.send_message(chat_id, f"✅ Done! {brand} added with {len(photo_ids)} photos.")
 
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO garage_cars (brand, owner, price_stars, price_paypal, price_paymaya, photo_file_id, date_added, time_added)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (brand, owner, stars, paypal, paymaya, collaged_photo_file_id, d_str, t_str))
-    cursor.execute("INSERT OR REPLACE INTO stock_metadata (product_type, last_restock_date, last_restock_time) VALUES ('GARAGE', ?, ?)", (d_str, t_str))
-    conn.commit()
-    conn.close()
-
-    for k in [f"addcar_brand_{user_id}", f"addcar_owner_{user_id}", f"addcar_stars_{user_id}", f"addcar_paypal_{user_id}", f"addcar_paymaya_{user_id}", f"addcar_flow_active_{user_id}"]:
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ Error: {str(e)}")
+    
+    # Linisin ang state
+    for k in [f"addcar_brand_{user_id}", f"addcar_owner_{user_id}", f"addcar_stars_{user_id}", 
+              f"addcar_paypal_{user_id}", f"addcar_paymaya_{user_id}", f"addcar_flow_active_{user_id}"]:
         user_states.pop(k, None)
 
-    try: bot.delete_message(chat_id, prog_msg.message_id)
-    except: pass
-    
-    bot.send_message(chat_id, f"✅ **[DB Engine Sync Complete]** {brand} has been successfully added to your TNNR Garage as a seamless data collage ({photo_count} photos input)!")
+# ---------------------------------------------------------------------------
+# 11. CATCH-ALL PHOTO MIDDLEWARE (FIXED & SECURED)
+# ---------------------------------------------------------------------------
+# Idagdag ito sa labas ng function para hindi ma-reset
+processed_media_groups = {}
 
-
-# =======================================================================
-# 11. CATCH-ALL PHOTO MIDDLEWARE (DITO SINALO ANG MGA ALBUM CHUNKS)
-# =======================================================================
 @bot.message_handler(content_types=['photo'])
-def catch_all_photo_handler(message):
+def handle_all_photos(message):
     user_id = message.from_user.id
     
+    # [FIX] Iwasan ang conflict sa /addcar workflow
     if user_states.get(f"addcar_flow_active_{user_id}") == "WAITING_FOR_CAR_PHOTOS":
-        process_car_photo(message)
-        return
+        return 
 
-    if f"pay_flow_{user_id}" in user_states:
-        process_payment_proof_receipt(message)
-        return
+    # --- DEBOUNCING / ALBUM CHECK ---
+    if message.media_group_id:
+        if message.media_group_id in processed_media_groups:
+            return 
+        processed_media_groups[message.media_group_id] = True
+        threading.Timer(2.0, lambda: processed_media_groups.pop(message.media_group_id, None)).start()
 
+    # 1. Logic para sa REVIEW
     if user_states.get(f"step_{user_id}") == "WAITING_FOR_PHOTO":
-        file_info = bot.get_file(message.photo[-1].file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        local_path = f"rev_snap_{user_id}_{datetime.now().strftime('%s')}.jpg"
-        with open(local_path, 'wb') as new_file:
-            new_file.write(downloaded_file)
-        user_states[f"rev_photo_{user_id}"] = local_path
-        advance_to_review_msg(message.chat.id, user_id)
-        return
+        user_photos = user_states.get(f"rev_photo_{user_id}", [])
+        
+        if len(user_photos) < 5:
+            file_info = bot.get_file(message.photo[-1].file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            local_path = f"rev_snap_{user_id}_{len(user_photos)}_{datetime.now().strftime('%s')}.jpg"
+            
+            with open(local_path, 'wb') as new_file:
+                new_file.write(downloaded_file)
+            
+            user_photos.append(local_path)
+            user_states[f"rev_photo_{user_id}"] = user_photos
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("✅ DONE UPLOADING", callback_data="done_photo"))
+            
+            bot.reply_to(message, f"✅ Photo added ({len(user_photos)}/5).", reply_markup=markup)
+        else:
+            bot.reply_to(message, "❌ Max 5 photos. Click 'DONE' to proceed.")
+            
+    # 2. Logic para sa PAYMENT PROOF
+    elif user_states.get(f"pay_flow_{user_id}"):
+        process_payment_proof_receipt(message)
 
 # ---------------------------------------------------------------------------
 # 12. SYSTEM APPLICATION EXECUTION POINT
